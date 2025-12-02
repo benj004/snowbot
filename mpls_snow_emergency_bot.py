@@ -218,7 +218,7 @@ async def check_minneapolis_homepage() -> Optional[Dict]:
                     
                     return {
                         "active": True,
-                        "source": "minneapolis.gov homepage",
+                        "source": "https://www.minneapolismn.gov/getting-around/snow/snow-emergencies",
                         "detected_at": datetime.now(),
                         "day": day_number,
                     }
@@ -435,7 +435,6 @@ def create_snow_emergency_embed(status_info: Dict) -> discord.Embed:
         embed.add_field(
             name="📱 More Info",
             value=(
-                "• Website: https://www.minneapolismn.gov/getting-around/snow/snow-emergencies/\n"
                 "• Parking rules: https://www.minneapolismn.gov/getting-around/snow/snow-emergencies/snow-parking-rules/\n"
                 "• Hotline: 612-348-SNOW (7669)\n"
                 "• App: MPLS Parking"
@@ -692,7 +691,7 @@ async def snow_status(ctx):
 
     status_info = {
         "active": is_active,
-        "source": source.get("source") if source else "Minneapolis",
+        "source": source.get("source") if source else "Minneapolis: (https://www.minneapolismn.gov/getting-around/snow/snow-emergencies/)",
         "day": final_day,
         "declared_date": declared_date,
     }
