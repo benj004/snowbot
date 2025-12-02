@@ -265,52 +265,113 @@ async def check_snowmpls_com() -> Optional[Dict]:
         print(f"Error checking snowmpls.com: {e}")
         return None
 
+async def fetch_latest_snow_emergency_announcement_url() -> Optional[str]:
+    """
+    Scrape https://www.minneapolismn.gov/news/ for the latest Snow Emergency
+    announcement link. This replaces the hardcoded SNOW_ANNOUNCEMENT_PAGE.
+    """
+    NEWS_URL = "https://www.minneapolismn.gov/news/"
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(NEWS_URL, timeout=10) as response:
+                if response.status != 200:
+                    print("[Announcement Finder] Could not load News page")
+                    return None
+
+                html = await response.text()
+                soup = BeautifulSoup(html, "html.parser")
+
+                # All article links are within <a href="..."> elements
+                links = soup.find_all("a", href=True)
+
+                candidates = []
+
+                for a in links:
+                    text = a.get_text(strip=True).lower()
+                    href = a["href"]
+
+                    # Look for "snow emergency" in the title text or href
+                    if "snow emergency" in text or "snow-emergency" in href:
+                        # Ensure it's a full URL
+                        if href.startswith("/"):
+                            href = "https://www.minneapolismn.gov" + href
+
+                        candidates.append(href)
+
+                if not candidates:
+                    print("[Announcement Finder] No announcement links found")
+                    return None
+
+                # The News page lists newest articles first, so pick the first match
+                latest = candidates[0]
+                print(f"[Announcement Finder] Latest announcement: {latest}")
+                return latest
+
+    except Exception as e:
+        print(f"[Announcement Finder] Error: {e}")
+        return None
 
 async def get_snow_emergency_details() -> Optional[Dict]:
     """
     Get details from the official Snow Updates page and announcement.
     """
+    """
+    Look up snow emergency details using the most recent announcement page.
+    """
+
+    print("[Details] Looking for latest Snow Emergency announcement...")
+
+    announcement_url = await fetch_latest_snow_emergency_announcement_url()
+
+    if not announcement_url:
+        print("[Details] No announcement URL found — falling back to updates page")
+        announcement_url = None  # It will skip to the updates page
+
     try:
         # First try the announcement page (most reliable)
         async with aiohttp.ClientSession() as session:
             print("[Details] Checking official announcement...")
             try:
-                async with session.get(SNOW_ANNOUNCEMENT_PAGE, timeout=10) as response:
-                    if response.status == 200:
-                        html = await response.text()
-                        soup = BeautifulSoup(html, "html.parser")
-                        text = soup.get_text(separator=" ")
+                if announcement_url:
+                    try:
+                        async with session.get(announcement_url, timeout=10) as response:
+                            if response.status == 200:
+                                html = await response.text()
+                                soup = BeautifulSoup(html, "html.parser")
+                                text = soup.get_text(separator=" ")
+
+                                print(f"[Details-Announcement] Fetched {len(text)} characters from dynamic URL")
+
                         
-                        print(f"[Details-Announcement] Fetched {len(text)} characters")
-                        
-                        # Extract day from patterns like "Dec. 1 (Day 2)" or "Monday, Dec. 1 (Day 2)"
-                        day = None
-                        day_patterns = [
-                            r"Dec\.\s*1\s*\(Day\s*(\d)\)",  # "Dec. 1 (Day 2)"
-                            r"December\s*1\s*\(Day\s*(\d)\)",  # "December 1 (Day 2)"
-                            r"\(Day\s*(\d)\)",  # Just "(Day 2)"
-                        ]
-                        
-                        for pattern in day_patterns:
-                            match = re.search(pattern, text, re.IGNORECASE)
-                            if match:
-                                day = match.group(1)
-                                print(f"[Details-Announcement] ✓ Found day: {day}")
-                                break
-                        
-                        # Extract declaration date - should be "November 30"
-                        declaration_date = None
-                        date_match = re.search(r"November\s+30", text, re.IGNORECASE)
-                        if date_match:
-                            declaration_date = "November 30, 2025"
-                            print(f"[Details-Announcement] ✓ Found declaration: {declaration_date}")
-                        
-                        if day or declaration_date:
-                            return {
-                                "day": day,
-                                "declaration_date": declaration_date,
-                                "page_text": text[:2000],
-                            }
+                            # Extract day from patterns like "Dec. 1 (Day 2)" or "Monday, Dec. 1 (Day 2)"
+                            day = None
+                            day_patterns = [
+                                r"Dec\.\s*1\s*\(Day\s*(\d)\)",  # "Dec. 1 (Day 2)"
+                                r"December\s*1\s*\(Day\s*(\d)\)",  # "December 1 (Day 2)"
+                                r"\(Day\s*(\d)\)",  # Just "(Day 2)"
+                            ]
+                            
+                            for pattern in day_patterns:
+                                match = re.search(pattern, text, re.IGNORECASE)
+                                if match:
+                                    day = match.group(1)
+                                    print(f"[Details-Announcement] ✓ Found day: {day}")
+                                    break
+                            
+                            # Extract declaration date - should be "November 30"
+                            declaration_date = None
+                            date_match = re.search(r"November\s+30", text, re.IGNORECASE)
+                            if date_match:
+                                declaration_date = "November 30, 2025"
+                                print(f"[Details-Announcement] ✓ Found declaration: {declaration_date}")
+                            
+                            if day or declaration_date:
+                                return {
+                                    "day": day,
+                                    "declaration_date": declaration_date,
+                                    "page_text": text[:2000],
+                                }
             except Exception as e:
                 print(f"[Details-Announcement] Error: {e}")
             
