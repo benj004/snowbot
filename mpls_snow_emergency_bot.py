@@ -474,102 +474,50 @@ async def check_snow_emergency():
     """
     global current_status
 
-    print(f"\n[{datetime.now()}] Checking for snow emergency...")
+    print(f"[{datetime.now()}] Checking for snow emergency...")
 
     homepage_status = await check_minneapolis_homepage()
     snowmpls_status = await check_snowmpls_com()
 
+    # Determine if emergency is active
     is_active = False
     source = None
-    detected_day = None
 
-    # Check homepage first (most reliable)
     if homepage_status and homepage_status.get("active"):
         is_active = True
         source = homepage_status
-        detected_day = homepage_status.get("day")
-        print(f"[Main] Active from homepage, Day detected: '{detected_day}'")
-        if not detected_day:
-            print("[Main] WARNING: Homepage shows active but no day number found!")
     elif snowmpls_status and snowmpls_status.get("active"):
         is_active = True
         source = snowmpls_status
-        detected_day = snowmpls_status.get("day")
-        print(f"[Main] Active from snowmpls, Day detected: '{detected_day}'")
-        if not detected_day:
-            print("[Main] WARNING: Snowmpls shows active but no day number found!")
 
+    # Initial defaults
+    details = None
+    final_day = None
+    final_date = None
+
+    # Fetch details only if active
+    if is_active:
+        details = await get_snow_emergency_details()
+
+    homepage_day = homepage_status.get("day") if homepage_status else None
+    details_day = details.get("day") if details else None
+    final_day = homepage_day or details_day
+    final_date = details.get("declared_date") if details else None
+
+    # Detect changes
     status_changed = current_status["active"] != is_active
+    day_changed = current_status.get("day") != final_day
 
-    if status_changed:
-        print(f"[Main] Status changed! Active: {is_active}")
+    # Only send alerts when ACTIVITY changes OR DAY changes
+    should_post = status_changed or (is_active and day_changed)
 
-        final_day = detected_day
-        declared_date = None
-        
-        # Get details from the page (might have declaration date and/or day)
-        details = None
-        if is_active:
-            details = await get_snow_emergency_details()
-            if details:
-                details_day = details.get("day")
-                details_date = details.get("declaration_date")
-                
-                # Use details day if we don't have one
-                if not final_day and details_day:
-                    final_day = details_day
-                    print(f"[Main] Got day from details page: {final_day}")
-                
-                # Get declaration date from details
-                if details_date:
-                    declared_date = details_date
-                    print(f"[Main] Got declaration date from details: {declared_date}")
-        
-        # If we have a day but no declaration date, calculate backwards
-        if final_day and not declared_date:
-            declared_date = calculate_declaration_date(final_day)
-            print(f"[Main] Calculated declaration date from day: {declared_date}")
-        
-        # If we have a declaration date but no day, calculate forward
-        if declared_date and not final_day:
-            final_day = calculate_current_day_from_declaration(declared_date)
-            print(f"[Main] Calculated current day from declaration date: {final_day}")
-        
-        # Last resort: if we still don't have a declaration date, use today
-        if not declared_date:
-            declared_date = datetime.now().strftime("%B %d, %Y")
-            print(f"[Main] Using today as declaration date: {declared_date}")
-        
-        print(f"[Main] FINAL VALUES - Day: '{final_day}', Declared Date: '{declared_date}'")
-
-                # FINAL sanity check:
-        # If we have a declaration date at this point, always recompute the
-        # current day from that date using the official time windows.
-        if declared_date:
-            recalculated_day = calculate_current_day_from_declaration(declared_date)
-            if recalculated_day:
-                print(
-                    f"[Main] Recalculated day from declaration date {declared_date}: "
-                    f"{recalculated_day} (was {final_day})"
-                )
-                final_day = recalculated_day
-            else:
-                print(
-                    f"[Main] Recalculated day from declaration date {declared_date} "
-                    "is None (snow emergency window may be over)."
-                )
-
-        
-        # Verify these aren't None or empty
-        if is_active:
-            if not final_day:
-                print("[Main] ERROR: Active emergency but no day detected!")
-            if not declared_date:
-                print("[Main] ERROR: Active emergency but no declared date!")
+    if should_post:
+        print(f"Posting update: active={is_active}, day={final_day}")
 
         current_status["active"] = is_active
-        current_status["last_check"] = datetime.now()
         current_status["day"] = final_day
+        current_status["last_check"] = datetime.now()
+        current_status["details"] = details
         current_status["source"] = source
 
         if CHANNEL_ID:
@@ -579,10 +527,9 @@ async def check_snow_emergency():
                     "active": is_active,
                     "source": source.get("source") if source else "Minneapolis",
                     "day": final_day,
-                    "declared_date": declared_date,
+                    "declared_date": final_date,
                 }
 
-                print(f"[Main] ABOUT TO CREATE EMBED with status_info: {status_info}")
                 embed = create_snow_emergency_embed(status_info)
 
                 if is_active:
