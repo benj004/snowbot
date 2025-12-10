@@ -280,28 +280,50 @@ async def check_snow_emergency():
     
     current_state["active"] = True
     
-    if day_num:
-        # 4. Post to Discord (Only if channel is set AND we are in a parking rule window)
+    # Check if we're on declaration day before Day 1 starts
+    decl_midnight = current_state["declaration_date"].replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=MPLS_TZ)
+    day1_start = decl_midnight.replace(hour=21)  # 9 PM declaration day
+    now = get_mpls_time()
+    
+    # Special case: On declaration day before 9 PM, send an initial alert
+    is_declaration_day_before_d1 = (now.date() == current_state["declaration_date"].date() and now < day1_start)
+    
+    if day_num or is_declaration_day_before_d1:
+        # 4. Post to Discord (Only if channel is set)
         if CHANNEL_ID:
             channel = bot.get_channel(CHANNEL_ID)
             if channel:
-                # Simple deduping: Don't repost the exact same day repeatedly
-                state_key = f"{current_state['declaration_date'].date()}-Day{day_num}"
+                # For declaration day alerts, use "Declaration" as the key
+                if is_declaration_day_before_d1 and not day_num:
+                    state_key = f"{current_state['declaration_date'].date()}-Declaration"
+                    alert_day = 0  # Special "declaration" alert
+                else:
+                    state_key = f"{current_state['declaration_date'].date()}-Day{day_num}"
+                    alert_day = day_num
                 
                 if current_state["last_alert_sent"] != state_key:
-                    embed = create_embed(day_num, current_state["declaration_date"])
+                    embed = create_embed(alert_day, current_state["declaration_date"])
                     
                     # --- CONDITIONAL MENTION LOGIC ---
                     if TEST_MODE:
-                        mention_content = f"🚨 **TEST MODE ALERT (Day {day_num})**"
+                        if alert_day == 0:
+                            mention_content = f"🚨 **TEST MODE ALERT (Snow Emergency DECLARED)**"
+                        else:
+                            mention_content = f"🚨 **TEST MODE ALERT (Day {alert_day})**"
                         print("TEST MODE: Alert prepared, but @everyone skipped.")
                     elif ENABLE_MENTIONS:
                         # This sends the live, disruptive notification
                         mention_content = "@everyone 🚨 **Snow Emergency Update!**"
-                        print(f"PRODUCTION MODE: Sending @everyone mention for Day {day_num}")
+                        if alert_day == 0:
+                            print(f"PRODUCTION MODE: Sending @everyone mention for Declaration")
+                        else:
+                            print(f"PRODUCTION MODE: Sending @everyone mention for Day {alert_day}")
                     else:
-                        mention_content = f"🚨 **Snow Emergency Update! (Day {day_num})**"
-                        print(f"PRODUCTION MODE (mentions disabled): Sending alert for Day {day_num}")
+                        if alert_day == 0:
+                            mention_content = f"🚨 **Snow Emergency DECLARED!**"
+                        else:
+                            mention_content = f"🚨 **Snow Emergency Update! (Day {alert_day})**"
+                        print(f"PRODUCTION MODE (mentions disabled): Sending alert for {'Declaration' if alert_day == 0 else f'Day {alert_day}'}")
                     
                     # Send the message using the determined content
                     await channel.send(content=mention_content, embed=embed)
@@ -315,6 +337,9 @@ async def check_snow_emergency():
 
 def create_embed(day: int, decl_date: datetime) -> discord.Embed:
     rules = {
+        0: "⚠️ **Snow Emergency has been declared!**\n\n"
+           "Day 1 parking restrictions begin at **9:00 PM tonight**.\n"
+           "Please move your vehicle from Snow Emergency Routes (marked with blue signs) before 9 PM.",
         1: "🚫 **No parking on Snow Emergency Routes** (marked with blue signs).",
         2: "🚫 **No parking on the EVEN side** of non-emergency routes.\n🚫 **No parking on Parkways**.",
         3: "🚫 **No parking on the ODD side** of non-emergency routes."
@@ -344,12 +369,21 @@ def create_embed(day: int, decl_date: datetime) -> discord.Embed:
         f"**Day 3 Rules Active** - {day3_start.strftime('%I:%M %p on %m/%d/%Y')} to {day3_end.strftime('%I:%M %p on %m/%d/%Y')}"
     )
     
+    # Set title based on day
+    if day == 0:
+        title = f"❄️ Snow Emergency DECLARED"
+        color = discord.Color.orange()
+    else:
+        title = f"❄️ Snow Emergency: Day {day} Rules In Effect"
+        color = discord.Color.red() if day in [1, 2, 3] else discord.Color.blue()
+    
     embed = discord.Embed(
-        title=f"❄️ Snow Emergency: Day {day} Rules In Effect",
-        description=f"Declared on **{decl_date.strftime('%A, %B %d, %Y')}**}",
-        color=discord.Color.red() if day in [1, 2, 3] else discord.Color.blue(),
+        title=title,
+        description=f"Declared on **{decl_date.strftime('%A, %B %d, %Y')}**",
+        color=color,
         timestamp=get_mpls_time()
     )
+    embed.add_field(name="Current Rules" if day > 0 else "What You Need to Know", value=rules[day], inline=False)
     embed.add_field(name="Estimated Timeline, confirm with City", value=timeline, inline=False)
     embed.add_field(
         name="Additional Resources",
@@ -402,7 +436,19 @@ async def snowstatus(ctx):
         return
     
     if decl_date:
-        day = calculate_snow_day(decl_date) or "Rules Not Active (Check site)"
+        day = calculate_snow_day(decl_date)
+        
+        # Check if we're on declaration day before Day 1 starts
+        decl_midnight = decl_date.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=MPLS_TZ)
+        day1_start = decl_midnight.replace(hour=21)
+        now = get_mpls_time()
+        
+        if day is None and now.date() == decl_date.date() and now < day1_start:
+            # Declaration day, before 9 PM
+            day = 0
+        elif day is None:
+            day = "Rules Not Active (Check site)"
+            
         embed = create_embed(day, decl_date)
         await ctx.send(embed=embed)
     else:
