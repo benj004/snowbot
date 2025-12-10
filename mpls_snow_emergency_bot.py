@@ -337,8 +337,7 @@ def create_embed(day: int, decl_date: datetime) -> discord.Embed:
     
     # Format the timeline
     timeline = (
-        f"**Parking Rules as Estimated by Bot**\n"
-        f"Please refer to [Full Rules]({MPLS_BASE_URL}/getting-around/snow/snow-emergencies/snow-parking-rules/) for further information:\n\n"
+        f"Please refer to [Full City Website Rules]({MPLS_BASE_URL}/getting-around/snow/snow-emergencies/snow-parking-rules/) for further information:\n\n"
         f"**Day 1 Rules Active** - {day1_start.strftime('%I:%M %p on %m/%d/%Y')} to {day1_end.strftime('%I:%M %p on %m/%d/%Y')}\n"
         f"**Day 2 Rules Active** - {day2_start.strftime('%I:%M %p on %m/%d/%Y')} to {day2_end.strftime('%I:%M %p on %m/%d/%Y')}\n"
         f"**Gap Between Days 2 and 3** - {gap_start.strftime('%I:%M %p on %m/%d/%Y')} to {gap_end.strftime('%I:%M %p on %m/%d/%Y')}\n"
@@ -347,11 +346,11 @@ def create_embed(day: int, decl_date: datetime) -> discord.Embed:
     
     embed = discord.Embed(
         title=f"❄️ Snow Emergency: Day {day} Rules In Effect",
-        description=f"Declared on **{decl_date.strftime('%A, %B %d, %Y')}**\n\n{rules.get(day, 'Check official sources for current rules.')}",
+        description=f"Declared on **{decl_date.strftime('%A, %B %d, %Y')}**}",
         color=discord.Color.red() if day in [1, 2, 3] else discord.Color.blue(),
         timestamp=get_mpls_time()
     )
-    embed.add_field(name="Complete Timeline", value=timeline, inline=False)
+    embed.add_field(name="Estimated Timeline, confirm with City", value=timeline, inline=False)
     embed.add_field(
         name="Additional Resources",
         value=(
