@@ -1,6 +1,6 @@
 """
-Minneapolis Snow Emergency Discord Bot (Refactored)
-===================================================
+Minneapolis Snow Emergency Discord Bot (Production Ready)
+==========================================================
 """
 import os
 import re
@@ -29,7 +29,8 @@ def get_mpls_time() -> datetime:
 # -------------------------------------------------------------------
 # CONFIGURATION
 # -------------------------------------------------------------------
-TEST_MODE = True
+TEST_MODE = False  # CHANGED: Set to False for production, set to True for testing
+ENABLE_MENTIONS = False  # Set to False to disable @everyone mentions
 BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 CHANNEL_ID = int(os.getenv("DISCORD_CHANNEL_ID", 0))
 
@@ -190,55 +191,41 @@ async def get_declaration_date_from_news(session: aiohttp.ClientSession) -> Opti
                         if now_month < 3 and parsed_month > 10:
                             parsed_date_naive = parsed_date_naive.replace(year=current_year - 1)
                         elif now_month > 10 and parsed_month < 3:
-                             parsed_date_naive = parsed_date_naive.replace(year=current_year + 1)
+                            parsed_date_naive = parsed_date_naive.replace(year=current_year + 1)
                         
-                        # Return timezone-aware midnight date (00:00:00 CST)
+                        # Make timezone-aware
                         return parsed_date_naive.replace(tzinfo=MPLS_TZ)
-            
-            return None
-
     except Exception as e:
-        print(f"[Scraper] Error getting news declaration date: {e}")
-        return None
+        print(f"Error scraping news page: {e}")
+    
+    return None
 
 async def check_active_status(session: aiohttp.ClientSession) -> bool:
     """
-    Checks the dedicated Snow Updates page for the explicit "A snow emergency is not currently in effect" text.
-    If that text is absent, we assume it is active. This is more robust than relying on a CSS banner.
+    Checks the Snow Updates page for the text "A snow emergency is in effect."
+    Robust against text formatting changes.
     """
-    
-    # Check the dedicated Snow Updates Page
     try:
-        async with session.get(SNOW_UPDATES_PAGE, timeout=5) as resp:
-            if resp.status == 200:
-                text = (await resp.text()).lower()
-                
-                # If the "inactive" phrase is found, return False.
-                if "a snow emergency is not currently in effect" in text:
-                    return False
-                
-                # Otherwise, assume it is active. The city either hasn't declared it over, 
-                # or is displaying the active status.
+        async with session.get(SNOW_UPDATES_PAGE, timeout=10) as resp:
+            if resp.status != 200:
+                return False
+            
+            text = await resp.text()
+            soup = BeautifulSoup(text, "html.parser")
+            
+            # Convert entire page to lowercase, stripped text
+            page_text = soup.get_text().lower()
+            
+            # Look for key phrase (with flexible spacing)
+            if "snow emergency is in effect" in page_text or "snow emergency has been declared" in page_text:
                 return True
     except Exception as e:
-        print(f"[Scraper] Error checking active status on updates page: {e}")
-        pass # Fall through to second check if first fails
-
-    # Fallback/Redundant Check: Homepage banner text (less reliable)
-    try:
-        async with session.get(MPLS_BASE_URL, timeout=5) as resp:
-            if resp.status == 200:
-                text = (await resp.text()).lower()
-                # Look for an explicit day announcement
-                if "snow emergency" in text and ("day 1" in text or "day 2" in text or "day 3" in text or "declared" in text):
-                    return True
-    except Exception as e:
-        print(f"[Scraper] Error checking active status on homepage: {e}")
-        
+        print(f"Error checking active status: {e}")
+    
     return False
 
 # -------------------------------------------------------------------
-# MAIN LOOP & DISCORD
+# TASK LOOP
 # -------------------------------------------------------------------
 
 @tasks.loop(minutes=15)
@@ -295,7 +282,6 @@ async def check_snow_emergency():
     
     if day_num:
         # 4. Post to Discord (Only if channel is set AND we are in a parking rule window)
-        # 4. Post to Discord (Only if channel is set AND we are in a parking rule window)
         if CHANNEL_ID:
             channel = bot.get_channel(CHANNEL_ID)
             if channel:
@@ -308,10 +294,14 @@ async def check_snow_emergency():
                     # --- CONDITIONAL MENTION LOGIC ---
                     if TEST_MODE:
                         mention_content = f"🚨 **TEST MODE ALERT (Day {day_num})**"
-                        print("TEST MODE: Alert prepared, but @here skipped.")
-                    else:
+                        print("TEST MODE: Alert prepared, but @everyone skipped.")
+                    elif ENABLE_MENTIONS:
                         # This sends the live, disruptive notification
-                        mention_content = "@here 🚨 **Snow Emergency Update!**" 
+                        mention_content = "@everyone 🚨 **Snow Emergency Update!**"
+                        print(f"PRODUCTION MODE: Sending @everyone mention for Day {day_num}")
+                    else:
+                        mention_content = f"🚨 **Snow Emergency Update! (Day {day_num})**"
+                        print(f"PRODUCTION MODE (mentions disabled): Sending alert for Day {day_num}")
                     
                     # Send the message using the determined content
                     await channel.send(content=mention_content, embed=embed)
@@ -393,6 +383,8 @@ async def on_ready():
         bot.http._session = aiohttp.ClientSession()
         
     print(f"Logged in as {bot.user}")
+    print(f"Configuration: TEST_MODE={TEST_MODE}, ENABLE_MENTIONS={ENABLE_MENTIONS}")
+    print(f"Target Channel ID: {CHANNEL_ID}")
     if not check_snow_emergency.is_running():
         check_snow_emergency.start()
 
@@ -424,4 +416,3 @@ if __name__ == "__main__":
     else:
         print("ERROR: DISCORD_BOT_TOKEN not found in .env file")
         raise SystemExit(1)
-
