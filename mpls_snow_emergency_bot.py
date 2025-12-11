@@ -30,7 +30,7 @@ def get_mpls_time() -> datetime:
 # CONFIGURATION
 # -------------------------------------------------------------------
 TEST_MODE = False  # CHANGED: Set to False for production, set to True for testing
-ENABLE_MENTIONS = False  # Set to False to disable @everyone mentions
+ENABLE_MENTIONS = False  # Set to False to disable @snowemergency mentions
 BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 CHANNEL_ID = int(os.getenv("DISCORD_CHANNEL_ID", 0))
 
@@ -310,14 +310,14 @@ async def check_snow_emergency():
                             mention_content = f"🚨 **TEST MODE ALERT (Snow Emergency DECLARED)**"
                         else:
                             mention_content = f"🚨 **TEST MODE ALERT (Day {alert_day})**"
-                        print("TEST MODE: Alert prepared, but @everyone skipped.")
+                        print("TEST MODE: Alert prepared, but @snowemergency skipped.")
                     elif ENABLE_MENTIONS:
                         # This sends the live, disruptive notification
-                        mention_content = "@everyone 🚨 **Snow Emergency Update!**"
+                        mention_content = "@snowemergency 🚨 **Snow Emergency Update!**"
                         if alert_day == 0:
-                            print(f"PRODUCTION MODE: Sending @everyone mention for Declaration")
+                            print(f"PRODUCTION MODE: Sending @snowemergency mention for Declaration")
                         else:
-                            print(f"PRODUCTION MODE: Sending @everyone mention for Day {alert_day}")
+                            print(f"PRODUCTION MODE: Sending @snowemergency mention for Day {alert_day}")
                     else:
                         if alert_day == 0:
                             mention_content = f"🚨 **Snow Emergency DECLARED!**"
@@ -340,9 +340,9 @@ def create_embed(day: int, decl_date: datetime) -> discord.Embed:
         0: "⚠️ **Snow Emergency has been declared!**\n\n"
            "Day 1 parking restrictions begin at **9:00 PM tonight**.\n"
            "Please move your vehicle from Snow Emergency Routes (marked with blue signs) before 9 PM.",
-        1: "🚫 **No parking on Snow Emergency Routes** (marked with blue signs).",
-        2: "🚫 **No parking on the EVEN side** of non-emergency routes.\n🚫 **No parking on Parkways**.",
-        3: "🚫 **No parking on the ODD side** of non-emergency routes."
+        1: "🚫 **No parking on Snow Emergency Routes (marked with blue signs).** \nParking allowed on parkways and streets that are not snow emergency routes.",
+        2: "🚫 **No parking on the EVEN (address #) side** streets that are not-emergency routes.\n🚫 **No parking on Parkways**. \nParking **ALLOWED** on **ODD** side of streets that are **NOT** snow emergency routes. \nParking ALLOWED on both sides of snow emergency routes",
+        3: "🚫 **No parking on the ODD (address #) side** of non-emergency routes. \nParking **ALLOWED** on the **EVEN** side of streets that are **NOT** snow emergency routes. Parking allowed on both sides of snow emergency routes and parkways."
     }
     
     # Calculate all the time periods
