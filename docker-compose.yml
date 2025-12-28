@@ -9,3 +9,5 @@ services:
     working_dir: /app
     volumes:
       - .:/app
+    # NEW: Optional - add shared memory for Chrome stability
+    shm_size: '2gb'

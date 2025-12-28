@@ -1,13 +1,13 @@
 """
 Minneapolis Snow Emergency Discord Bot (Production Ready)
 ==========================================================
+UPDATED: Added optional Selenium support for JavaScript banner detection
 """
 import os
 import re
 import asyncio
 from datetime import datetime, timedelta
 from typing import Optional, Dict
-# Note: You may need to run 'pip install python-dateutil' if ZoneInfo isn't available
 from zoneinfo import ZoneInfo 
 
 import aiohttp
@@ -16,51 +16,53 @@ from discord.ext import commands, tasks
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
-load_dotenv()
-# Add this line to the import section (Requires Python 3.9+)
-from zoneinfo import ZoneInfo 
+# NEW: Optional Selenium imports
+try:
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options
+    SELENIUM_AVAILABLE = True
+    print("✓ Selenium is available - enhanced banner detection enabled!")
+except ImportError:
+    SELENIUM_AVAILABLE = False
+    print("⚠ Selenium not installed - using standard detection methods")
 
-# Define the Timezone constant (Add this after the CONFIGURATION section)
+load_dotenv()
+
+# Define the Timezone constant
 MPLS_TZ = ZoneInfo("America/Chicago")
 
 def get_mpls_time() -> datetime:
     """Returns current time in Minneapolis (timezone-aware)."""
     return datetime.now(MPLS_TZ)
+
 # -------------------------------------------------------------------
 # CONFIGURATION
 # -------------------------------------------------------------------
-TEST_MODE = False  # CHANGED: Set to False for production, set to True for testing
-ENABLE_MENTIONS = False  # Set to False to disable @snowemergency mentions
+TEST_MODE = True  # Set to False for production, set to True for testing
+ENABLE_MENTIONS = True  # Set to False to disable @snowemergency mentions
+USE_SELENIUM = True  # NEW: Set to False to disable Selenium even if installed
 BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 CHANNEL_ID = int(os.getenv("DISCORD_CHANNEL_ID", 0))
 
 # URLs
 MPLS_BASE_URL = "https://www.minneapolismn.gov"
 MPLS_NEWS_PAGE = f"{MPLS_BASE_URL}/news/"
-# The most reliable page for status text.
 SNOW_UPDATES_PAGE = f"{MPLS_BASE_URL}/getting-around/snow/snow-emergencies/snow-updates/"
-
-# Timezone - CRITICAL for accurate Day 1/2/3 calculation
-MPLS_TZ = ZoneInfo("America/Chicago")
 
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# State tracking (Global/Bot instance variables)
+# State tracking
 current_state = {
     "active": False,
-    "declaration_date": None, # datetime object
+    "declaration_date": None,
     "last_alert_sent": None,
 }
 
 # -------------------------------------------------------------------
 # CORE LOGIC: DATE & DAY CALCULATION
 # -------------------------------------------------------------------
-
-def get_mpls_time() -> datetime:
-    """Returns current time in Minneapolis."""
-    return datetime.now(MPLS_TZ)
 
 def calculate_snow_day(declaration_date: datetime) -> Optional[int]:
     """
@@ -86,7 +88,7 @@ def calculate_snow_day(declaration_date: datetime) -> Optional[int]:
     day3_start = (decl_midnight + timedelta(days=2)).replace(hour=8)
     day3_end = (decl_midnight + timedelta(days=2)).replace(hour=20)
 
-    # --- Debug Logging (New) ---
+    # --- Debug Logging ---
     print(f"[Day Calc] Decl Date: {declaration_date.strftime('%Y-%m-%d %H:%M %Z')}")
     print(f"[Day Calc] NOW Time: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
     print("-" * 30)
@@ -105,7 +107,7 @@ def calculate_snow_day(declaration_date: datetime) -> Optional[int]:
     elif day3_start <= now < day3_end:
         return 3
     
-    # If the current time is outside all windows (i.e., past 8 PM Day 3)
+    # If the current time is outside all windows
     return None
 
 def parse_date_from_text(text: str) -> Optional[datetime]:
@@ -113,8 +115,6 @@ def parse_date_from_text(text: str) -> Optional[datetime]:
     Extracts a date like "Nov. 30" and converts to a localized datetime object.
     Infers the correct year based on the current date.
     """
-    # Look for Month Name + Day Number (e.g., "Nov. 30" or "November 30")
-    # This regex is robust against periods/short forms like "Dec. 1"
     match = re.search(r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z.]*\s+(\d{1,2})", text, re.IGNORECASE)
     if not match:
         return None
@@ -122,24 +122,19 @@ def parse_date_from_text(text: str) -> Optional[datetime]:
     month_str, day_str = match.groups()
     
     try:
-        # Create a naive date object using the current year as a base
         current_year = get_mpls_time().year
-        # We use a known format that includes the year
         date_str = f"{month_str} {day_str} {current_year}"
         parsed_date_naive = datetime.strptime(date_str, "%b %d %Y")
         
-        # Check for year rollover (e.g., in Jan 2026, finding a Dec 30 article means it's 2025)
+        # Check for year rollover
         now_month = get_mpls_time().month
         parsed_month = parsed_date_naive.month
         
-        # If current month is Jan/Feb, and parsed month is Oct/Nov/Dec, subtract one year
         if now_month < 3 and parsed_month > 10:
             parsed_date_naive = parsed_date_naive.replace(year=current_year - 1)
-        # If current month is Oct/Nov/Dec, and parsed month is Jan/Feb, add one year (for future pre-announcement)
         elif now_month > 10 and parsed_month < 3:
              parsed_date_naive = parsed_date_naive.replace(year=current_year + 1)
             
-        # Make the resulting date timezone-aware (set to midnight of the date)
         return parsed_date_naive.replace(tzinfo=MPLS_TZ)
         
     except ValueError:
@@ -162,7 +157,7 @@ async def get_declaration_date_from_news(session: aiohttp.ClientSession) -> Opti
             # Find the most recent news card explicitly mentioning a snow emergency
             card_title = soup.find(
                 "h3", 
-                text=lambda t: t and "snow emergency" in t.lower()
+                string=lambda t: t and "snow emergency" in t.lower()
             )
 
             if card_title:
@@ -175,23 +170,14 @@ async def get_declaration_date_from_news(session: aiohttp.ClientSession) -> Opti
                     day_span = card.find("span", class_="day")
 
                     if month_span and day_span:
-                        month_str = month_span.get_text(strip=True)
-                        day_str = day_span.get_text(strip=True)
+                        month_text = month_span.get_text(strip=True)
+                        day_text = day_span.get_text(strip=True)
+                        combined_text = f"{month_text} {day_text}"
                         
-                        # Calculate the year (handling rollover for Dec/Jan)
-                        current_year = get_mpls_time().year
-                        date_str = f"{month_str} {day_str} {current_year}"
+                        print(f"[News Scraper] Found date text: '{combined_text}'")
                         
-                        parsed_date_naive = datetime.strptime(date_str, "%B %d %Y")
-                        
-                        # Year rollover check (from Nov/Dec to next Jan/Feb)
-                        now_month = get_mpls_time().month
-                        parsed_month = parsed_date_naive.month
-                        
-                        if now_month < 3 and parsed_month > 10:
-                            parsed_date_naive = parsed_date_naive.replace(year=current_year - 1)
-                        elif now_month > 10 and parsed_month < 3:
-                            parsed_date_naive = parsed_date_naive.replace(year=current_year + 1)
+                        # Use parse_date_from_text to convert to a datetime object
+                        return parse_date_from_text(combined_text)
                         
                         # Make timezone-aware
                         return parsed_date_naive.replace(tzinfo=MPLS_TZ)
@@ -200,11 +186,72 @@ async def get_declaration_date_from_news(session: aiohttp.ClientSession) -> Opti
     
     return None
 
+# NEW: Selenium-based banner detection
+def check_banner_with_selenium() -> bool:
+    """
+    Uses Selenium to actually load the page and execute JavaScript,
+    allowing us to see the dynamically-loaded banner.
+    """
+    if not SELENIUM_AVAILABLE or not USE_SELENIUM:
+        return False
+    
+    driver = None
+    try:
+        # Set up headless Chrome
+        chrome_options = Options()
+        chrome_options.add_argument('--headless')
+        chrome_options.add_argument('--no-sandbox')
+        chrome_options.add_argument('--disable-dev-shm-usage')
+        chrome_options.add_argument('--disable-gpu')
+        
+        print("[Selenium] Starting browser...")
+        driver = webdriver.Chrome(options=chrome_options)
+        driver.get(MPLS_BASE_URL)
+        
+        # Wait for JavaScript to execute
+        import time
+        time.sleep(2)
+        
+        # Get the rendered page
+        html = driver.page_source
+        soup = BeautifulSoup(html, "html.parser")
+        page_text = soup.get_text().lower()
+        
+        # Look for banner keywords
+        keywords = [
+            "snow emergency declared",
+            "snow emergency has been declared",
+            "declares snow emergency"
+        ]
+        
+        for keyword in keywords:
+            if keyword in page_text:
+                print(f"[Selenium] ✓ Found banner: '{keyword}'")
+                return True
+        
+        return False
+        
+    except Exception as e:
+        print(f"[Selenium] Error: {e}")
+        return False
+    finally:
+        if driver:
+            driver.quit()
+
 async def check_active_status(session: aiohttp.ClientSession) -> bool:
     """
     Checks the Snow Updates page for the text "A snow emergency is in effect."
-    Robust against text formatting changes.
+    NOW ENHANCED: Also checks with Selenium if available.
     """
+    # NEW: Try Selenium first if available
+    if SELENIUM_AVAILABLE and USE_SELENIUM:
+        print("[Check] Using Selenium for banner detection...")
+        selenium_result = await asyncio.to_thread(check_banner_with_selenium)
+        if selenium_result:
+            print("[Check] ✓ Selenium detected active emergency")
+            return True
+    
+    # Original check (updates page)
     try:
         async with session.get(SNOW_UPDATES_PAGE, timeout=10) as resp:
             if resp.status != 200:
@@ -239,51 +286,45 @@ async def check_snow_emergency():
     is_active = await check_active_status(session)
     
     if not is_active:
+        print("Status: No active snow emergency detected.")
+        # Reset state if there's no active emergency
         current_state["active"] = False
-        # Do NOT clear declaration_date unless we are sure it's fully over (Day 3 + 8PM)
-        print("Status: Inactive")
+        current_state["declaration_date"] = None
         return
-
-    # 2. If active, get the Declaration Date (Source of Truth)
+    
+    print("Status: Active snow emergency detected!")
+    
+    # 2. Get declaration date (use the news scraper)
     decl_date = await get_declaration_date_from_news(session)
     
+    # NEW: Check if the found date is expired (past Day 3)
     if decl_date:
-        current_state["declaration_date"] = decl_date
-        # Check if the fetched date is too old (e.g., from last year) and discard if necessary
-        if (get_mpls_time() - decl_date).days > 7 and not calculate_snow_day(decl_date):
-            print("Status: Active, but Declaration Date is very old and rules aren't running. Skipping.")
-            current_state["active"] = False
-            return
-            
-        print(f"Status: Active. Declared: {decl_date.strftime('%B %d, %Y')}")
-    elif current_state["declaration_date"]:
-        print("Status: Active. Using cached declaration date.")
-    else:
-        # Emergency is active, but we failed to find the news article (rare, but possible).
-        # We can't calculate Day 1/2/3 reliably, so we must rely on the manual check.
-        print("Status: Active. FAILED to find declaration date for Day calculation. Use !snowstatus for manual check.")
-        return # Skip posting alert if we can't calculate the day
-
-    # 3. Calculate Day (only if declaration_date is set)
-    day_num = calculate_snow_day(current_state["declaration_date"])
-    
-    # FIXED: Check if emergency has completely ended (past Day 3 @ 8PM)
-    if day_num is None:
-        # Calculate Day 3 end time
-        decl_midnight = current_state["declaration_date"].replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=MPLS_TZ)
-        day3_end = (decl_midnight + timedelta(days=2)).replace(hour=20)
+        now = get_mpls_time()
+        decl_midnight = decl_date.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=MPLS_TZ)
+        day3_end = (decl_midnight + timedelta(days=2)).replace(hour=20)  # 8 PM two days after declaration
         
-        if get_mpls_time() > day3_end:
-            print(f"Status: Emergency has ENDED (Day 3 ended at {day3_end.strftime('%Y-%m-%d %H:%M %Z')})")
-            current_state["active"] = False
-            return
+        if now > day3_end:
+            print(f"[WARNING] Found news article dated {decl_date.strftime('%m/%d/%Y')} but it has expired (Day 3 ended {day3_end.strftime('%m/%d %I:%M %p')})")
+            print(f"[WARNING] Emergency is active but old news article found - using TODAY's date as fallback")
+            decl_date = get_mpls_time().replace(hour=0, minute=0, second=0, microsecond=0)
     
+    # If we still don't have a date after checking, use today as last resort
+    if not decl_date:
+        print("[WARNING] Active emergency detected but no declaration date found!")
+        print("[WARNING] Using today's date as fallback")
+        decl_date = get_mpls_time().replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    # Update state
     current_state["active"] = True
+    current_state["declaration_date"] = decl_date
     
-    # Check if we're on declaration day before Day 1 starts
-    decl_midnight = current_state["declaration_date"].replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=MPLS_TZ)
-    day1_start = decl_midnight.replace(hour=21)  # 9 PM declaration day
+    # 3. Calculate what snow emergency day we're in
+    day_num = calculate_snow_day(decl_date)
+    
+    # Calculate Day 1 start time for pre-declaration alerts
     now = get_mpls_time()
+    decl_midnight = decl_date.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=MPLS_TZ)
+    day1_start = decl_midnight.replace(hour=21)
     
     # Special case: On declaration day before 9 PM, send an initial alert
     is_declaration_day_before_d1 = (now.date() == current_state["declaration_date"].date() and now < day1_start)
@@ -310,14 +351,13 @@ async def check_snow_emergency():
                             mention_content = f"🚨 **TEST MODE ALERT (Snow Emergency DECLARED)**"
                         else:
                             mention_content = f"🚨 **TEST MODE ALERT (Day {alert_day})**"
-                        print("TEST MODE: Alert prepared, but @snowemergency skipped.")
+                        print("TEST MODE: Alert prepared, but skipped.")
                     elif ENABLE_MENTIONS:
-                        # This sends the live, disruptive notification
-                        mention_content = "@snowemergency 🚨 **Snow Emergency Update!**"
+                        mention_content = "🚨 **Snow Emergency Update!**"
                         if alert_day == 0:
-                            print(f"PRODUCTION MODE: Sending @snowemergency mention for Declaration")
+                            print(f"PRODUCTION MODE: Sending @emergency mention for Declaration")
                         else:
-                            print(f"PRODUCTION MODE: Sending @snowemergency mention for Day {alert_day}")
+                            print(f"PRODUCTION MODE: Sending mention for Day {alert_day}")
                     else:
                         if alert_day == 0:
                             mention_content = f"🚨 **Snow Emergency DECLARED!**"
@@ -339,26 +379,26 @@ def create_embed(day: int, decl_date: datetime) -> discord.Embed:
     rules = {
         0: "⚠️ **Snow Emergency has been declared!**\n\n"
            "Day 1 parking restrictions begin at **9:00 PM tonight**.\n"
-           "Please move your vehicle from Snow Emergency Routes (marked with blue signs) before 9 PM.",
-        1: "🚫 **No parking on Snow Emergency Routes (marked with blue signs).** \n✅Parking allowed on parkways and streets that are not snow emergency routes.",
-        2: "🚫 **No parking on the EVEN (address #) side** streets that are not-emergency routes.\n🚫 **No parking on Parkways**. \n✅Parking is **ALLOWED** on **ODD** side of streets that are **NOT** snow emergency routes. \n✅Parking is ALLOWED on both sides of snow emergency routes where applicable.",
-        3: "🚫 **No parking on the ODD (address #) side** of non-emergency routes. \n✅Parking is **ALLOWED** on the **EVEN** side of streets that are **NOT** snow emergency routes. Parking is ALLOWED on both sides of snow emergency routes and parkways where applicable."
+           "Please move your vehicle from Snow Emergency Routes (marked with signs) before 9 PM.",
+        1: "🚫 **No parking on Snow Emergency Routes (marked with signs).** \n✅Parking **ALLOWED** on parkways and streets that are **NOT** snow emergency routes.",
+        2: "🚫 **No parking on the EVEN (address #) side** streets that are not-emergency routes.\n🚫 **No parking on Parkways**. \n✅Parking is **ALLOWED** on **ODD** side of streets that are **NOT** snow emergency routes. \n✅Parking is **ALLOWEDII on both sides of snow emergency routes where applicable.",
+        3: "🚫 **No parking on the ODD (address #) side** of non-emergency routes. \n✅Parking is **ALLOWED** on the **EVEN** side of streets that are **NOT** snow emergency routes. Parking is **ALLOWED** on both sides of snow emergency routes and parkways where applicable."
     }
     
     # Calculate all the time periods
     decl_midnight = decl_date.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=MPLS_TZ)
     
-    day1_start = decl_midnight.replace(hour=21)  # 9 PM declaration day
-    day1_end = (decl_midnight + timedelta(days=1)).replace(hour=8)  # 8 AM next day
+    day1_start = decl_midnight.replace(hour=21)
+    day1_end = (decl_midnight + timedelta(days=1)).replace(hour=8)
     
-    day2_start = day1_end  # 8 AM next day
-    day2_end = (decl_midnight + timedelta(days=1)).replace(hour=20)  # 8 PM next day
+    day2_start = day1_end
+    day2_end = (decl_midnight + timedelta(days=1)).replace(hour=20)
     
-    gap_start = day2_end  # 8 PM after Day 2
-    gap_end = (decl_midnight + timedelta(days=2)).replace(hour=8)  # 8 AM two days after
+    gap_start = day2_end
+    gap_end = (decl_midnight + timedelta(days=2)).replace(hour=8)
     
-    day3_start = gap_end  # 8 AM two days after
-    day3_end = (decl_midnight + timedelta(days=2)).replace(hour=20)  # 8 PM two days after
+    day3_start = gap_end
+    day3_end = (decl_midnight + timedelta(days=2)).replace(hour=20)
     
     # Format the timeline
     timeline = (
@@ -400,10 +440,7 @@ def create_embed(day: int, decl_date: datetime) -> discord.Embed:
 @check_snow_emergency.before_loop
 async def before_check():
     """Sets up the persistent aiohttp session."""
-    # We rely on the internal session for persistence, which discord.py manages
     await bot.wait_until_ready()
-    # Note: bot.http._session is the aiohttp.ClientSession instance used by discord.py
-    # We will pass this session to our scraper functions.
 
 # -------------------------------------------------------------------
 # COMMANDS
@@ -418,15 +455,20 @@ async def on_ready():
     print(f"Logged in as {bot.user}")
     print(f"Configuration: TEST_MODE={TEST_MODE}, ENABLE_MENTIONS={ENABLE_MENTIONS}")
     print(f"Target Channel ID: {CHANNEL_ID}")
+    if SELENIUM_AVAILABLE and USE_SELENIUM:
+        print("Selenium: ENABLED - Will check JavaScript banners")
+    elif SELENIUM_AVAILABLE:
+        print("Selenium: Available but disabled in config")
+    else:
+        print("Selenium: Not installed (pip install selenium to enable)")
     if not check_snow_emergency.is_running():
         check_snow_emergency.start()
 
 @bot.command()
 async def snowstatus(ctx):
     """Manual check command."""
-    await ctx.defer() # Acknowledge command immediately
+    await ctx.defer()
 
-    # Run the checks once, using the existing session
     session = bot.http._session
     is_active = await check_active_status(session)
     decl_date = await get_declaration_date_from_news(session)
@@ -438,13 +480,11 @@ async def snowstatus(ctx):
     if decl_date:
         day = calculate_snow_day(decl_date)
         
-        # Check if we're on declaration day before Day 1 starts
         decl_midnight = decl_date.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=MPLS_TZ)
         day1_start = decl_midnight.replace(hour=21)
         now = get_mpls_time()
         
         if day is None and now.date() == decl_date.date() and now < day1_start:
-            # Declaration day, before 9 PM
             day = 0
         elif day is None:
             day = "Rules Not Active (Check site)"
@@ -453,7 +493,6 @@ async def snowstatus(ctx):
         await ctx.send(embed=embed)
     else:
         await ctx.send(f"⚠️ **Snow Emergency is Active**, but the bot could not find the declaration date to calculate the current day. Please check the official Minneapolis website: {SNOW_UPDATES_PAGE}")
-
 
 if __name__ == "__main__":
     if BOT_TOKEN:
