@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   snowbot:
     container_name: snowbot
