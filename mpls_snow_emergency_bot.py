@@ -38,7 +38,7 @@ def get_mpls_time() -> datetime:
 # -------------------------------------------------------------------
 # CONFIGURATION
 # -------------------------------------------------------------------
-TEST_MODE = True  # Set to False for production, set to True for testing
+TEST_MODE = False  # Set to False for production, set to True for testing
 ENABLE_MENTIONS = True  # Set to False to disable @snowemergency mentions
 USE_SELENIUM = True  # NEW: Set to False to disable Selenium even if installed
 BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
@@ -355,9 +355,9 @@ async def check_snow_emergency():
                     elif ENABLE_MENTIONS:
                         mention_content = "🚨 **Snow Emergency Update!**"
                         if alert_day == 0:
-                            print(f"PRODUCTION MODE: Sending @emergency mention for Declaration")
+                            print(f"Sending @emergency mention for Declaration")
                         else:
-                            print(f"PRODUCTION MODE: Sending mention for Day {alert_day}")
+                            print(f"Sending mention for Day {alert_day}")
                     else:
                         if alert_day == 0:
                             mention_content = f"🚨 **Snow Emergency DECLARED!**"
