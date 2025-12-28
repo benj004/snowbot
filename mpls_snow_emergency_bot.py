@@ -355,7 +355,7 @@ async def check_snow_emergency():
                     elif ENABLE_MENTIONS:
                         mention_content = "🚨 **Snow Emergency Update!**"
                         if alert_day == 0:
-                            print(f"Sending @emergency mention for Declaration")
+                            print(f"Sending mention for Declaration")
                         else:
                             print(f"Sending mention for Day {alert_day}")
                     else:
@@ -411,7 +411,7 @@ def create_embed(day: int, decl_date: datetime) -> discord.Embed:
     
     # Set title based on day
     if day == 0:
-        title = f"❄️ Snow Emergency DECLARED"
+        title = f"❄️ @everyone Snow Emergency DECLARED"
         color = discord.Color.orange()
     else:
         title = f"❄️ Snow Emergency: Day {day} Rules In Effect"
