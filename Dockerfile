@@ -73,4 +73,4 @@ ENV CHROME_BIN=/usr/bin/google-chrome
 ENV DISPLAY=:99
 
 # --- Start Bot ---
-CMD ["python", "testing.py"]
+CMD ["python", "mpls_snow_emergency_bot.py"]
