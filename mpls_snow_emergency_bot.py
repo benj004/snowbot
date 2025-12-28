@@ -411,7 +411,7 @@ def create_embed(day: int, decl_date: datetime) -> discord.Embed:
     
     # Set title based on day
     if day == 0:
-        title = f"❄️ @everyone Snow Emergency DECLARED"
+        title = f"❄️Snow Emergency DECLARED"
         color = discord.Color.orange()
     else:
         title = f"❄️ Snow Emergency: Day {day} Rules In Effect"
