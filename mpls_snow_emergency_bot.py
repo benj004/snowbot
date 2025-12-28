@@ -353,14 +353,14 @@ async def check_snow_emergency():
                             mention_content = f"🚨 **TEST MODE ALERT (Day {alert_day})**"
                         print("TEST MODE: Alert prepared, but skipped.")
                     elif ENABLE_MENTIONS:
-                        mention_content = "🚨 **Snow Emergency Update!**"
+                        mention_content ="🚨 **Snow Emergency Update!**"
                         if alert_day == 0:
                             print(f"Sending mention for Declaration")
                         else:
                             print(f"Sending mention for Day {alert_day}")
                     else:
                         if alert_day == 0:
-                            mention_content = f"🚨 **Snow Emergency DECLARED!**"
+                            mention_content = f"@everyone 🚨 **Snow Emergency DECLARED!**"
                         else:
                             mention_content = f"🚨 **Snow Emergency Update! (Day {alert_day})**"
                         print(f"PRODUCTION MODE (mentions disabled): Sending alert for {'Declaration' if alert_day == 0 else f'Day {alert_day}'}")
