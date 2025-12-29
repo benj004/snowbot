@@ -380,7 +380,7 @@ def create_embed(day: int, decl_date: datetime) -> discord.Embed:
            "Day 1 parking restrictions begin at **9:00 PM tonight**.\n"
            "Please move your vehicle from Snow Emergency Routes (marked with signs) before 9 PM.",
         1: "🚫 **No parking on Snow Emergency Routes (marked with signs).** \n✅Parking **ALLOWED** on parkways and streets that are **NOT** snow emergency routes.",
-        2: "🚫 **No parking on the EVEN (address #) side** streets that are not-emergency routes.\n🚫 **No parking on Parkways**. \n✅Parking is **ALLOWED** on **ODD** side of streets that are **NOT** snow emergency routes. \n✅Parking is **ALLOWEDII on both sides of snow emergency routes where applicable.",
+        2: "🚫 **No parking on the EVEN (address #) side** streets that are not-emergency routes.\n🚫 **No parking on Parkways**. \n✅Parking is **ALLOWED** on **ODD** side of streets that are **NOT** snow emergency routes. \n✅Parking is **ALLOWED** on both sides of snow emergency routes where applicable.",
         3: "🚫 **No parking on the ODD (address #) side** of non-emergency routes. \n✅Parking is **ALLOWED** on the **EVEN** side of streets that are **NOT** snow emergency routes. Parking is **ALLOWED** on both sides of snow emergency routes and parkways where applicable."
     }
     
