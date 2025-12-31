@@ -1,3 +1,4 @@
+
 """
 Minneapolis Snow Emergency Discord Bot (Production Ready)
 ==========================================================
@@ -191,6 +192,9 @@ def check_banner_with_selenium() -> bool:
     """
     Uses Selenium to actually load the page and execute JavaScript,
     allowing us to see the dynamically-loaded banner.
+    
+    IMPORTANT: Checks for ACTIVE emergency by looking for positive indicators
+    AND verifying the absence of "not in effect" negations.
     """
     if not SELENIUM_AVAILABLE or not USE_SELENIUM:
         return False
@@ -217,17 +221,36 @@ def check_banner_with_selenium() -> bool:
         soup = BeautifulSoup(html, "html.parser")
         page_text = soup.get_text().lower()
         
-        # Look for banner keywords
-        keywords = [
-            "snow emergency declared",
+        # First check: Look for NEGATIVE indicators (emergency NOT active)
+        negative_phrases = [
+            "not in effect",
+            "is not in effect",
+            "not currently in effect",
+            "no longer in effect",
+            "has ended"
+        ]
+        
+        for negative in negative_phrases:
+            if negative in page_text and "snow emergency" in page_text:
+                print(f"[Selenium] ✗ Found NEGATIVE indicator: '{negative}' - Emergency is NOT active")
+                return False
+        
+        # Second check: Look for POSITIVE indicators (emergency IS active)
+        positive_keywords = [
+            "snow emergency is in effect",
             "snow emergency has been declared",
             "declares snow emergency"
         ]
         
-        for keyword in keywords:
+        for keyword in positive_keywords:
             if keyword in page_text:
-                print(f"[Selenium] ✓ Found banner: '{keyword}'")
+                print(f"[Selenium] ✓ Found POSITIVE indicator: '{keyword}' - Emergency IS active")
                 return True
+        
+        # If we find "snow emergency declared" but no clear positive/negative, be cautious
+        if "snow emergency declared" in page_text:
+            print("[Selenium] ⚠ Found ambiguous 'snow emergency declared' without clear status - defaulting to INACTIVE")
+            return False
         
         return False
         
@@ -304,9 +327,15 @@ async def check_snow_emergency():
         day3_end = (decl_midnight + timedelta(days=2)).replace(hour=20)  # 8 PM two days after declaration
         
         if now > day3_end:
-            print(f"[WARNING] Found news article dated {decl_date.strftime('%m/%d/%Y')} but it has expired (Day 3 ended {day3_end.strftime('%m/%d %I:%M %p')})")
-            print(f"[WARNING] Emergency is active but old news article found - using TODAY's date as fallback")
-            decl_date = get_mpls_time().replace(hour=0, minute=0, second=0, microsecond=0)
+            print(f"[WARNING] Found news article dated {decl_date.strftime('%m/%d/%Y')} but Day 3 ended at {day3_end.strftime('%m/%d %I:%M %p')}")
+            print(f"[WARNING] Current time is {now.strftime('%m/%d %I:%M %p')} which is PAST Day 3 end time")
+            print(f"[CRITICAL] Emergency should NOT be active - this is likely a false positive from an old banner")
+            
+            # Override the active status - this is almost certainly a false positive
+            print("[OVERRIDE] Setting emergency status to INACTIVE due to expired date")
+            current_state["active"] = False
+            current_state["declaration_date"] = None
+            return
     
     # If we still don't have a date after checking, use today as last resort
     if not decl_date:
