@@ -40,7 +40,7 @@ def get_mpls_time() -> datetime:
 # CONFIGURATION
 # -------------------------------------------------------------------
 TEST_MODE = False  # Set to False for production, set to True for testing
-ENABLE_MENTIONS = True  # Set to False to disable @snowemergency mentions
+ENABLE_MENTIONS = False  # Set to False to disable @snowemergency mentions
 USE_SELENIUM = True  # NEW: Set to False to disable Selenium even if installed
 BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 CHANNEL_ID = int(os.getenv("DISCORD_CHANNEL_ID", 0))
@@ -528,3 +528,4 @@ if __name__ == "__main__":
     else:
         print("ERROR: DISCORD_BOT_TOKEN not found in .env file")
         raise SystemExit(1)
+
