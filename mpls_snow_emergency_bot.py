@@ -39,7 +39,7 @@ def get_mpls_time() -> datetime:
 # CONFIGURATION
 # -------------------------------------------------------------------
 TEST_MODE = False  # Set to False for production, set to True for testing
-ENABLE_MENTIONS = True  # Set to False to disable @snowemergency mentions
+ENABLE_MENTIONS = False  # Set to False to disable @snowemergency mentions
 USE_SELENIUM = True  # NEW: Set to False to disable Selenium even if installed
 BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 CHANNEL_ID = int(os.getenv("DISCORD_CHANNEL_ID", 0))
@@ -187,20 +187,12 @@ async def get_declaration_date_from_news(session: aiohttp.ClientSession) -> Opti
     return None
 
 # NEW: Selenium-based banner detection
-def check_banner_with_selenium() -> bool:
-    """
-    Uses Selenium to actually load the page and execute JavaScript,
-    allowing us to see the dynamically-loaded banner.
-    
-    IMPORTANT: Checks for ACTIVE emergency by looking for positive indicators
-    AND verifying the absence of "not in effect" negations.
-    """
+def check_banner_with_selenium() -> Optional[datetime]:
     if not SELENIUM_AVAILABLE or not USE_SELENIUM:
-        return False
+        return None
     
     driver = None
     try:
-        # Set up headless Chrome
         chrome_options = Options()
         chrome_options.add_argument('--headless')
         chrome_options.add_argument('--no-sandbox')
@@ -211,91 +203,84 @@ def check_banner_with_selenium() -> bool:
         driver = webdriver.Chrome(options=chrome_options)
         driver.get(MPLS_BASE_URL)
         
-        # Wait for JavaScript to execute
         import time
         time.sleep(2)
         
-        # Get the rendered page
         html = driver.page_source
         soup = BeautifulSoup(html, "html.parser")
         page_text = soup.get_text().lower()
         
-        # First check: Look for NEGATIVE indicators (emergency NOT active)
-        negative_phrases = [
-            "not in effect",
-            "is not in effect",
-            "not currently in effect",
-            "no longer in effect",
-            "has ended"
-        ]
-        
+        # Check negative indicators first
+        negative_phrases = ["not in effect", "is not in effect", "not currently in effect", 
+                            "no longer in effect", "has ended"]
         for negative in negative_phrases:
             if negative in page_text and "snow emergency" in page_text:
-                print(f"[Selenium] ✗ Found NEGATIVE indicator: '{negative}' - Emergency is NOT active")
-                return False
+                print(f"[Selenium] ✗ NEGATIVE indicator: '{negative}' — not active")
+                return None
         
-        # Second check: Look for POSITIVE indicators (emergency IS active)
-        positive_keywords = [
-            "snow emergency is in effect",
-            "snow emergency has been declared",
-            "declares snow emergency"
-        ]
-        
+        # Check positive indicators and extract the date
+        positive_keywords = ["snow emergency is in effect", "snow emergency has been declared",
+                             "declares snow emergency", "declared a snow emergency"]
         for keyword in positive_keywords:
             if keyword in page_text:
-                print(f"[Selenium] ✓ Found POSITIVE indicator: '{keyword}' - Emergency IS active")
-                return True
+                print(f"[Selenium] ✓ POSITIVE indicator: '{keyword}'")
+                # Get the original (non-lowercased) text for date parsing
+                # Get original text and search specifically for the Day 1 time phrase
+            original_text = soup.get_text()
+
+# Target the specific banner phrase: "Day 1 rules begin at 9 p.m. Sunday, March 15"
+            banner_match = re.search(
+                r"Day 1 rules begin at[\w\s.,]+?(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z.]*\s+(\d{1,2})",
+                original_text,
+                re.IGNORECASE
+            )
+            if banner_match:
+                # Extract just the month/day portion and parse it
+                date_text = banner_match.group(0)
+                print(f"[Selenium] Banner date phrase: '{date_text}'")
+                decl_date = parse_date_from_text(date_text)
+            else:
+                # Fallback to full page parse if specific phrase not found
+                print("[Selenium] ⚠ Could not find 'Day 1 rules begin' phrase, falling back to full page parse")
+                decl_date = parse_date_from_text(original_text)
+                if decl_date:
+                    print(f"[Selenium] ✓ Extracted date: {decl_date.strftime('%B %d, %Y')}")
+                else:
+                    print("[Selenium] ⚠ Could not extract date from banner text")
+                return decl_date  # Returns datetime if found, None if parsing failed
         
-        # If we find "snow emergency declared" but no clear positive/negative, be cautious
-        if "snow emergency declared" in page_text:
-            print("[Selenium] ⚠ Found ambiguous 'snow emergency declared' without clear status - defaulting to INACTIVE")
-            return False
-        
-        return False
+        return None
         
     except Exception as e:
         print(f"[Selenium] Error: {e}")
-        return False
+        return None
     finally:
         if driver:
             driver.quit()
 
-async def check_active_status(session: aiohttp.ClientSession) -> bool:
-    """
-    Checks the Snow Updates page for the text "A snow emergency is in effect."
-    NOW ENHANCED: Also checks with Selenium if available.
-    """
-    # NEW: Try Selenium first if available
+async def check_active_status(session: aiohttp.ClientSession) -> Optional[datetime]:
     if SELENIUM_AVAILABLE and USE_SELENIUM:
         print("[Check] Using Selenium for banner detection...")
-        selenium_result = await asyncio.to_thread(check_banner_with_selenium)
-        if selenium_result:
-            print("[Check] ✓ Selenium detected active emergency")
+        selenium_date = await asyncio.to_thread(check_banner_with_selenium)
+        if selenium_date:
+            print(f"[Check] ✓ Selenium detected active emergency, start date: {selenium_date.strftime('%B %d, %Y')}")
         else:
             print("[Check] ✗ Selenium confirmed NO active emergency")
-        # When Selenium is enabled, trust its result completely
-        return selenium_result
+        return selenium_date  # datetime if active, None if not
     
-    # Original check (updates page) - only used when Selenium is disabled/unavailable
+    # Fallback (non-Selenium) — still returns None, no date extraction here
     try:
         async with session.get(SNOW_UPDATES_PAGE, timeout=10) as resp:
             if resp.status != 200:
-                return False
-            
+                return None
             text = await resp.text()
             soup = BeautifulSoup(text, "html.parser")
-            
-            # Convert entire page to lowercase, stripped text
             page_text = soup.get_text().lower()
-            
-            # Look for key phrase (with flexible spacing)
             if "snow emergency is in effect" in page_text or "snow emergency has been declared" in page_text:
-                return True
+                return get_mpls_time()  # Fallback: use today if no Selenium
     except Exception as e:
         print(f"Error checking active status: {e}")
-    
-    return False
-
+    return None
 # -------------------------------------------------------------------
 # TASK LOOP
 # -------------------------------------------------------------------
@@ -306,22 +291,26 @@ async def check_snow_emergency():
     
     # Use the session stored in the bot instance
     session = bot.http._session
+        
     
     # 1. Check Active Status
-    is_active = await check_active_status(session)
-    
+    selenium_date = await check_active_status(session)
+    is_active = selenium_date is not None
+
     if not is_active:
         print("Status: No active snow emergency detected.")
-        # Reset state if there's no active emergency
         current_state["active"] = False
         current_state["declaration_date"] = None
         return
-    
+
     print("Status: Active snow emergency detected!")
-    
-    # 2. Get declaration date (use the news scraper)
-    decl_date = await get_declaration_date_from_news(session)
-    
+
+# 2. Use Selenium date if available, otherwise fall back to news scraper
+    if selenium_date:
+        decl_date = selenium_date
+        print(f"[Date] Using Selenium banner date: {decl_date.strftime('%B %d, %Y')}")
+    else:
+        decl_date = await get_declaration_date_from_news(session)    
     # NEW: Check if the found date is expired (past Day 3)
     if decl_date:
         now = get_mpls_time()
